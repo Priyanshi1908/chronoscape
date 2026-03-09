@@ -27,7 +27,7 @@ const SEASON_CONFIG = {
     particleDrift: new THREE.Vector3(0.0, 0.003, 0.0),
     noiseScale: 1.2,
     geometryDetail: 64,
-    rotationSpeed: 0.0025,
+    rotationSpeed: 0.001,
     coreScale: 1.0,
   },
   summer: {
@@ -46,7 +46,7 @@ const SEASON_CONFIG = {
     particleDrift: new THREE.Vector3(0.002, 0.005, 0.001),
     noiseScale: 0.8,
     geometryDetail: 64,
-    rotationSpeed: 0.006,
+    rotationSpeed: 0.0018,
     coreScale: 1.18,
   },
   autumn: {
@@ -65,7 +65,7 @@ const SEASON_CONFIG = {
     particleDrift: new THREE.Vector3(0.001, -0.004, 0.001),
     noiseScale: 1.6,
     geometryDetail: 64,
-    rotationSpeed: 0.0014,
+    rotationSpeed: 0.0007,
     coreScale: 0.92,
   },
   winter: {
@@ -84,7 +84,7 @@ const SEASON_CONFIG = {
     particleDrift: new THREE.Vector3(0.0, -0.001, 0.0),
     noiseScale: 2.0,
     geometryDetail: 64,
-    rotationSpeed: 0.0003,
+    rotationSpeed: 0.00015,
     coreScale: 0.86,
   }
 };
@@ -133,7 +133,7 @@ const SCULPT_CONFIG = {
     fresnelPow: 2.8, fresnelStr: 0.65, emissiveStr: 0.06,
   },
   summer: {
-    noiseAmp: 0.62, noiseFreq: 0.68, noiseSpeed: 1.25,
+    noiseAmp: 0.62, noiseFreq: 0.68, noiseSpeed: 0.55,
     detailAmp: 0.16, detailFreq: 3.2,
     color1: new THREE.Color(0xf7c325), color2: new THREE.Color(0xf56e1a), colorDark: new THREE.Color(0x6a2800),
     fresnelPow: 1.6, fresnelStr: 1.05, emissiveStr: 0.38,
@@ -160,6 +160,8 @@ let isTransitioning = false;
 let mouse = { x: 0, y: 0, targetX: 0, targetY: 0 };
 let clock = new THREE.Clock();
 let scrollProgress = 0;
+let rotationDir = 1;       // 1 = clockwise (scroll down), -1 = anticlockwise (scroll up)
+let signedRotSpeed = 0;    // single signed value — lerps through zero so no sudden flip
 const blobRaycaster = new THREE.Raycaster();
 const ripplePointer = new THREE.Vector2();
 
@@ -1044,11 +1046,10 @@ function animate() {
   coreShaderMaterial.uniforms.uTime.value = time;
   coreShaderMaterial.uniforms.uRippleAge.value += 0.018;
 
-  // Core rotation with mouse influence
-  coreMesh.rotation.y += cfg.rotationSpeed;
-  coreMesh.rotation.x += cfg.rotationSpeed * 0.5;
-  coreMesh.rotation.y += mouse.x * 0.002;
-  coreMesh.rotation.x += mouse.y * 0.001;
+  // Lerp signed speed toward target — passes through zero so direction never snaps
+  const targetSpeed = cfg.rotationSpeed * rotationDir;
+  signedRotSpeed += (targetSpeed - signedRotSpeed) * 0.04;
+  coreMesh.rotation.y += signedRotSpeed;
 
   // Core scale
   const targetScale = cfg.coreScale + Math.sin(time * 0.5) * 0.03;
@@ -1068,7 +1069,7 @@ function animate() {
 
   // Ring animation
   ring.rotation.z += 0.001;
-  ring2.rotation.z -= 0.0008;
+  ring2.rotation.z += 0.0008;
   ring2.rotation.x += 0.0003;
 
   // Tendril group rotation
@@ -1661,6 +1662,7 @@ function initScrollDrivenSeasons() {
 function _triggerSeasonChange(season) {
   const newIndex = SEASONS.indexOf(season);
   if (newIndex === currentSeasonIndex) return;
+  rotationDir = newIndex > currentSeasonIndex ? 1 : -1;
   currentSeasonIndex = newIndex;
   const cfg = SEASON_CONFIG[season];
   document.body.dataset.season = season;
@@ -1677,7 +1679,7 @@ function _triggerSeasonChange(season) {
 // ============================================
 const _freezingAudio = new Audio('/freezing.mp3');
 _freezingAudio.preload      = 'auto';
-_freezingAudio.volume       = 0.85;
+_freezingAudio.volume       = 0.35;
 _freezingAudio.playbackRate = 0.7;
 
 function _playFreezeSound() {
@@ -1716,7 +1718,7 @@ function _animateSculptureToSeason(season) {
 
   gsap.to(u.uNoiseAmp,        { value: scfg.noiseAmp,    duration: dur,        ease });
   gsap.to(u.uNoiseFreq,       { value: scfg.noiseFreq,   duration: dur,        ease });
-  gsap.to(u.uNoiseSpeed,      { value: scfg.noiseSpeed,  duration: dur,        ease });
+  gsap.to(u.uNoiseSpeed,      { value: scfg.noiseSpeed,  duration: dur * 0.3,  ease: 'power3.out' });
   gsap.to(u.uDetailAmp,       { value: scfg.detailAmp,   duration: dur * 0.8,  ease });
   gsap.to(u.uDetailFreq,      { value: scfg.detailFreq,  duration: dur * 0.8,  ease });
   gsap.to(u.uColor1.value,    { r: scfg.color1.r,    g: scfg.color1.g,    b: scfg.color1.b,    duration: dur * 0.85, ease });
@@ -1775,65 +1777,58 @@ function initAudio() {
       _freezingAudio.pause();
       _freezingAudio.currentTime = 0;
       _springAmbient.silence();
+      _summerAudio.pause();
+      _autumnAudio.pause();
     }
   });
 }
 
 function _startSeasonAmbient(season) {
-  if (season === 'winter')      { _winterAmbient.start(); _autumnAmbient.stop(); _springAmbient.stop(); }
-  else if (season === 'autumn') { _autumnAmbient.start(); _winterAmbient.stop(); _springAmbient.stop(); }
-  else if (season === 'spring') { _springAmbient.start(); _winterAmbient.stop(); _autumnAmbient.stop(); }
-  else                          { _winterAmbient.stop();  _autumnAmbient.stop(); _springAmbient.stop(); }
+  if (season === 'winter')      { _winterAmbient.start(); _autumnAmbient.stop(); _springAmbient.stop(); _summerAmbient.stop(); }
+  else if (season === 'autumn') { _autumnAmbient.start(); _winterAmbient.stop(); _springAmbient.stop(); _summerAmbient.stop(); }
+  else if (season === 'spring') { _springAmbient.start(); _winterAmbient.stop(); _autumnAmbient.stop(); _summerAmbient.stop(); }
+  else if (season === 'summer') { _summerAmbient.start(); _winterAmbient.stop(); _autumnAmbient.stop(); _springAmbient.stop(); }
+  else                          { _winterAmbient.stop();  _autumnAmbient.stop(); _springAmbient.stop(); _summerAmbient.stop(); }
 }
 
 function _buildSeasonAudio() {
-  const FILTER_CFG = {
-    spring: { type: 'bandpass', freq: 420,  q: 0.4 },
-    summer: { type: 'highpass', freq: 1400, q: 0.3 },
-    autumn: { type: 'lowpass',  freq: 580,  q: 0.9 },
-    winter: { type: 'lowpass',  freq: 180,  q: 1.4 },
-  };
+  // Only build pink noise for winter — it's the only season that uses it.
+  // Building nodes for other seasons and leaving them at gain 0 causes audible bleed.
+  const bufSize = audioCtx.sampleRate * 4;
+  const buf     = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
+  const data    = buf.getChannelData(0);
+  let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+  for (let i = 0; i < bufSize; i++) {
+    const w = Math.random() * 2 - 1;
+    b0 = 0.99886 * b0 + w * 0.0555179; b1 = 0.99332 * b1 + w * 0.0750759;
+    b2 = 0.96900 * b2 + w * 0.1538520; b3 = 0.86650 * b3 + w * 0.3104856;
+    b4 = 0.55000 * b4 + w * 0.5329522; b5 = -0.7616 * b5 - w * 0.0168980;
+    data[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + w * 0.5362) * 0.11;
+    b6 = w * 0.115926;
+  }
 
-  SEASONS.forEach(season => {
-    // Pink noise synthesis (Paul Kellet's method)
-    const bufSize = audioCtx.sampleRate * 4;
-    const buf = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
-    const data = buf.getChannelData(0);
-    let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
-    for (let i = 0; i < bufSize; i++) {
-      const w = Math.random() * 2 - 1;
-      b0 = 0.99886 * b0 + w * 0.0555179; b1 = 0.99332 * b1 + w * 0.0750759;
-      b2 = 0.96900 * b2 + w * 0.1538520; b3 = 0.86650 * b3 + w * 0.3104856;
-      b4 = 0.55000 * b4 + w * 0.5329522; b5 = -0.7616 * b5 - w * 0.0168980;
-      data[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + w * 0.5362) * 0.11;
-      b6 = w * 0.115926;
-    }
+  const src  = audioCtx.createBufferSource();
+  src.buffer = buf;
+  src.loop   = true;
 
-    const src = audioCtx.createBufferSource();
-    src.buffer = buf;
-    src.loop = true;
+  const filt = audioCtx.createBiquadFilter();
+  filt.type = 'lowpass'; filt.frequency.value = 180; filt.Q.value = 1.4;
 
-    const fc = FILTER_CFG[season];
-    const filt = audioCtx.createBiquadFilter();
-    filt.type = fc.type; filt.frequency.value = fc.freq; filt.Q.value = fc.q;
+  const gain = audioCtx.createGain();
+  gain.gain.value = 0;
 
-    const gain = audioCtx.createGain();
-    gain.gain.value = 0;
-
-    src.connect(filt); filt.connect(gain); gain.connect(audioCtx.destination);
-    src.start();
-    audioNodes[season] = { src, filt, gainNode: gain };
-  });
+  src.connect(filt); filt.connect(gain); gain.connect(audioCtx.destination);
+  src.start();
+  audioNodes['winter'] = { src, filt, gainNode: gain };
 }
 
 function _crossfadeToSeason(season) {
   if (!audioCtx || !audioActive) return;
-  const TARGET = { spring: 0, summer: 0, autumn: 0, winter: 0.08 };
-  SEASONS.forEach(s => {
-    const node = audioNodes[s];
-    if (!node) return;
-    node.gainNode.gain.setTargetAtTime(s === season ? TARGET[s] : 0, audioCtx.currentTime, 0.8);
-  });
+  const node = audioNodes['winter'];
+  if (!node) return;
+  // Fade winter noise in for winter (and sections below it), off for everything above
+  const target = season === 'winter' ? 0.08 : 0;
+  node.gainNode.gain.setTargetAtTime(target, audioCtx.currentTime, 0.8);
 }
 
 // ============================================
@@ -1841,26 +1836,85 @@ function _crossfadeToSeason(season) {
 // Strategy: start muted immediately (always allowed), unmute on first mousemove.
 // Unmuting a playing audio element needs NO user gesture — only the initial play() does.
 // ============================================
-const _springAudio = new Audio('/spring.mp3');
+const _springAudio = new Audio('/summer.mp3');
 _springAudio.loop   = true;
 _springAudio.volume = 0.75;
 
-const _springAmbient = {
-  start() {
+const _springAmbient = (() => {
+  let masterGain = null;
+  let chimeTimer = null;
+
+  function _ensureGain() {
+    if (masterGain) return;
+    masterGain = audioCtx.createGain();
+    masterGain.gain.value = 1.0;
+    masterGain.connect(audioCtx.destination);
+  }
+
+  function _ping(freq, delay, vol) {
+    if (!audioCtx || !masterGain) return;
+    const now  = audioCtx.currentTime;
+    const osc  = audioCtx.createOscillator();
+    osc.type = 'sine'; osc.frequency.value = freq;
+    const osc2 = audioCtx.createOscillator();
+    osc2.type = 'sine'; osc2.frequency.value = freq * 2;
+    const env = audioCtx.createGain();
+    env.gain.setValueAtTime(0, now + delay);
+    env.gain.linearRampToValueAtTime(vol, now + delay + 0.01);
+    env.gain.exponentialRampToValueAtTime(0.0001, now + delay + 4.5);
+    const env2 = audioCtx.createGain();
+    env2.gain.setValueAtTime(0, now + delay);
+    env2.gain.linearRampToValueAtTime(vol * 0.15, now + delay + 0.01);
+    env2.gain.exponentialRampToValueAtTime(0.0001, now + delay + 2.0);
+    osc.connect(env);   env.connect(masterGain);
+    osc2.connect(env2); env2.connect(masterGain);
+    osc.start(now + delay);  osc.stop(now + delay + 5.0);
+    osc2.start(now + delay); osc2.stop(now + delay + 2.5);
+  }
+
+  function _chime() {
+    if (!audioCtx || !audioActive || !masterGain) return;
+    const SCALE = [261.6, 293.7, 329.6, 392.0, 440.0, 523.3, 587.3, 659.3];
+    const r = Math.random();
+    if (r < 0.35) {
+      _ping(SCALE[Math.floor(Math.random() * SCALE.length)], 0, 0.055);
+    } else if (r < 0.70) {
+      const i = Math.floor(Math.random() * (SCALE.length - 1));
+      _ping(SCALE[i], 0, 0.052);
+      _ping(SCALE[i + 1], 0.6 + Math.random() * 0.5, 0.040);
+    } else {
+      const i = Math.floor(Math.random() * (SCALE.length - 2));
+      _ping(SCALE[i], 0, 0.048);
+      _ping(SCALE[i + 1], 0.55 + Math.random() * 0.3, 0.038);
+      _ping(SCALE[i + 2], 1.2  + Math.random() * 0.4, 0.030);
+    }
+  }
+
+  function _scheduleChimes() {
     if (!audioActive) return;
-    _springAudio.muted = false;
-    if (_springAudio.paused) _springAudio.play().catch(() => {});
-  },
-  stop() {
-    // Mute rather than pause — so resuming spring is instant (no play() needed)
-    _springAudio.muted = true;
-  },
-  silence() {
-    // Full stop for when audio is globally disabled
-    _springAudio.muted = true;
-    _springAudio.pause();
-  },
-};
+    _chime();
+    chimeTimer = setTimeout(_scheduleChimes, 2500 + Math.random() * 4500);
+  }
+
+  return {
+    start() {
+      if (!audioActive) return;
+      _ensureGain();
+      _springAudio.muted = false;
+      if (_springAudio.paused) _springAudio.play().catch(() => {});
+      if (!chimeTimer) _scheduleChimes();
+    },
+    stop() {
+      _springAudio.muted = true;
+      if (chimeTimer) { clearTimeout(chimeTimer); chimeTimer = null; }
+    },
+    silence() {
+      _springAudio.muted = true;
+      _springAudio.pause();
+      if (chimeTimer) { clearTimeout(chimeTimer); chimeTimer = null; }
+    },
+  };
+})();
 
 // ============================================
 // WINTER AMBIENT — light atmospheric layer
@@ -1933,8 +1987,28 @@ const _winterAmbient = (() => {
 })();
 
 // ============================================
-// AUTUMN AMBIENT — warm Dm pad + falling-leaf plucks
+// SUMMER AMBIENT — spring.mp3 (forest/birds) on loop
 // ============================================
+const _summerAudio = new Audio('/spring.mp3');
+_summerAudio.loop   = true;
+_summerAudio.volume = 0.35;
+
+const _summerAmbient = {
+  start() {
+    if (!audioActive) return;
+    _summerAudio.play().catch(() => {});
+  },
+  stop() {
+    _summerAudio.pause();
+  },
+};
+
+// ============================================
+// AUTUMN AMBIENT — autumn.mp3 + warm Dm pad + falling-leaf plucks
+// ============================================
+const _autumnAudio = new Audio('/autumn.mp3');
+_autumnAudio.loop   = true;
+_autumnAudio.volume = 0.5;
 const _autumnAmbient = (() => {
   let masterGain  = null;
   let built       = false;
@@ -2023,12 +2097,14 @@ const _autumnAmbient = (() => {
       masterGain.gain.cancelScheduledValues(audioCtx.currentTime);
       masterGain.gain.setTargetAtTime(1.0, audioCtx.currentTime, 2.5);
       if (!pluckTimer) _schedulePlucks();
+      _autumnAudio.play().catch(() => {});
     },
     stop() {
       if (!masterGain) return;
       masterGain.gain.cancelScheduledValues(audioCtx.currentTime);
       masterGain.gain.setTargetAtTime(0, audioCtx.currentTime, 2.0);
       if (pluckTimer) { clearTimeout(pluckTimer); pluckTimer = null; }
+      _autumnAudio.pause();
     },
   };
 })();
