@@ -27,7 +27,7 @@ const SEASON_CONFIG = {
     particleDrift: new THREE.Vector3(0.0, 0.003, 0.0),
     noiseScale: 1.2,
     geometryDetail: 64,
-    rotationSpeed: 0.002,
+    rotationSpeed: 0.0025,
     coreScale: 1.0,
   },
   summer: {
@@ -46,8 +46,8 @@ const SEASON_CONFIG = {
     particleDrift: new THREE.Vector3(0.002, 0.005, 0.001),
     noiseScale: 0.8,
     geometryDetail: 64,
-    rotationSpeed: 0.003,
-    coreScale: 1.2,
+    rotationSpeed: 0.006,
+    coreScale: 1.18,
   },
   autumn: {
     index: 2,
@@ -65,8 +65,8 @@ const SEASON_CONFIG = {
     particleDrift: new THREE.Vector3(0.001, -0.004, 0.001),
     noiseScale: 1.6,
     geometryDetail: 64,
-    rotationSpeed: 0.0015,
-    coreScale: 0.9,
+    rotationSpeed: 0.0014,
+    coreScale: 0.92,
   },
   winter: {
     index: 3,
@@ -84,8 +84,8 @@ const SEASON_CONFIG = {
     particleDrift: new THREE.Vector3(0.0, -0.001, 0.0),
     noiseScale: 2.0,
     geometryDetail: 64,
-    rotationSpeed: 0.001,
-    coreScale: 0.85,
+    rotationSpeed: 0.0003,
+    coreScale: 0.86,
   }
 };
 
@@ -123,74 +123,46 @@ const SEASON_QUOTES = {
 const SEASON_NUMS = { spring: '01', summer: '02', autumn: '03', winter: '04' };
 
 // ============================================
+// SCULPT CONFIG — per-season GLSL shader params
+// ============================================
+const SCULPT_CONFIG = {
+  spring: {
+    noiseAmp: 0.28, noiseFreq: 1.0, noiseSpeed: 0.42,
+    detailAmp: 0.06, detailFreq: 2.8,
+    color1: new THREE.Color(0x5db86e), color2: new THREE.Color(0xe8d5c8), colorDark: new THREE.Color(0x0f2e18),
+    fresnelPow: 2.8, fresnelStr: 0.65, emissiveStr: 0.06,
+  },
+  summer: {
+    noiseAmp: 0.62, noiseFreq: 0.68, noiseSpeed: 1.25,
+    detailAmp: 0.16, detailFreq: 3.2,
+    color1: new THREE.Color(0xf7c325), color2: new THREE.Color(0xf56e1a), colorDark: new THREE.Color(0x6a2800),
+    fresnelPow: 1.6, fresnelStr: 1.05, emissiveStr: 0.38,
+  },
+  autumn: {
+    noiseAmp: 0.36, noiseFreq: 1.75, noiseSpeed: 0.30,
+    detailAmp: 0.10, detailFreq: 6.5,
+    color1: new THREE.Color(0xd4501a), color2: new THREE.Color(0x7a1e2a), colorDark: new THREE.Color(0x180506),
+    fresnelPow: 4.2, fresnelStr: 0.36, emissiveStr: 0.07,
+  },
+  winter: {
+    noiseAmp: 0.05, noiseFreq: 4.5, noiseSpeed: 0.08,
+    detailAmp: 0.13, detailFreq: 16.0,
+    color1: new THREE.Color(0x8cc8f0), color2: new THREE.Color(0x3a6898), colorDark: new THREE.Color(0x020810),
+    fresnelPow: 6.5, fresnelStr: 1.3, emissiveStr: 0.48,
+  },
+};
+
+// ============================================
 // STATE
 // ============================================
 let currentSeasonIndex = 0;
 let isTransitioning = false;
 let mouse = { x: 0, y: 0, targetX: 0, targetY: 0 };
 let clock = new THREE.Clock();
+let scrollProgress = 0;
+const blobRaycaster = new THREE.Raycaster();
+const ripplePointer = new THREE.Vector2();
 
-// ============================================
-// SIMPLEX NOISE (inlined for no deps)
-// ============================================
-function createNoise() {
-  const perm = new Uint8Array(512);
-  const p = new Uint8Array(256);
-  for (let i = 0; i < 256; i++) p[i] = i;
-  for (let i = 255; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [p[i], p[j]] = [p[j], p[i]];
-  }
-  for (let i = 0; i < 512; i++) perm[i] = p[i & 255];
-
-  const grad3 = [
-    [1,1,0],[-1,1,0],[1,-1,0],[-1,-1,0],
-    [1,0,1],[-1,0,1],[1,0,-1],[-1,0,-1],
-    [0,1,1],[0,-1,1],[0,1,-1],[0,-1,-1]
-  ];
-
-  function dot3(g, x, y, z) { return g[0]*x + g[1]*y + g[2]*z; }
-
-  return function noise3D(x, y, z) {
-    const F3 = 1/3, G3 = 1/6;
-    const s = (x+y+z)*F3;
-    const i = Math.floor(x+s), j = Math.floor(y+s), k = Math.floor(z+s);
-    const t = (i+j+k)*G3;
-    const X0 = i-t, Y0 = j-t, Z0 = k-t;
-    const x0 = x-X0, y0 = y-Y0, z0 = z-Z0;
-
-    let i1,j1,k1,i2,j2,k2;
-    if(x0>=y0){
-      if(y0>=z0){i1=1;j1=0;k1=0;i2=1;j2=1;k2=0;}
-      else if(x0>=z0){i1=1;j1=0;k1=0;i2=1;j2=0;k2=1;}
-      else{i1=0;j1=0;k1=1;i2=1;j2=0;k2=1;}
-    } else {
-      if(y0<z0){i1=0;j1=0;k1=1;i2=0;j2=1;k2=1;}
-      else if(x0<z0){i1=0;j1=1;k1=0;i2=0;j2=1;k2=1;}
-      else{i1=0;j1=1;k1=0;i2=1;j2=1;k2=0;}
-    }
-
-    const x1=x0-i1+G3, y1=y0-j1+G3, z1=z0-k1+G3;
-    const x2=x0-i2+2*G3, y2=y0-j2+2*G3, z2=z0-k2+2*G3;
-    const x3=x0-1+3*G3, y3=y0-1+3*G3, z3=z0-1+3*G3;
-
-    const ii=i&255, jj=j&255, kk=k&255;
-    let n0=0, n1=0, n2=0, n3=0;
-
-    let t0 = 0.6-x0*x0-y0*y0-z0*z0;
-    if(t0>0){t0*=t0; n0=t0*t0*dot3(grad3[perm[ii+perm[jj+perm[kk]]]%12],x0,y0,z0);}
-    let t1 = 0.6-x1*x1-y1*y1-z1*z1;
-    if(t1>0){t1*=t1; n1=t1*t1*dot3(grad3[perm[ii+i1+perm[jj+j1+perm[kk+k1]]]%12],x1,y1,z1);}
-    let t2 = 0.6-x2*x2-y2*y2-z2*z2;
-    if(t2>0){t2*=t2; n2=t2*t2*dot3(grad3[perm[ii+i2+perm[jj+j2+perm[kk+k2]]]%12],x2,y2,z2);}
-    let t3 = 0.6-x3*x3-y3*y3-z3*z3;
-    if(t3>0){t3*=t3; n3=t3*t3*dot3(grad3[perm[ii+1+perm[jj+1+perm[kk+1]]]%12],x3,y3,z3);}
-
-    return 32*(n0+n1+n2+n3);
-  };
-}
-
-const noise3D = createNoise();
 
 // ============================================
 // THREE.JS SETUP
@@ -238,20 +210,199 @@ scene.add(rimLight);
 // CORE ORGANIC FORM
 // ============================================
 const coreGeometry = new THREE.IcosahedronGeometry(1.3, 40);
-const originalPositions = coreGeometry.attributes.position.array.slice();
 
-const coreMaterial = new THREE.MeshPhysicalMaterial({
-  color: SEASON_CONFIG.spring.coreColor,
-  metalness: 0.1,
-  roughness: 0.5,
-  transmission: 0.15,
-  thickness: 0.8,
-  clearcoat: 0.4,
-  clearcoatRoughness: 0.2,
-  envMapIntensity: 0.6,
+// ============================================
+// GLSL SHADER MATERIAL — GPU displacement blob
+// ============================================
+const _VERT_NOISE = `
+  vec3 mod289v3(vec3 x){return x-floor(x*(1.0/289.0))*289.0;}
+  vec4 mod289v4(vec4 x){return x-floor(x*(1.0/289.0))*289.0;}
+  vec4 permute4(vec4 x){return mod289v4(((x*34.0)+1.0)*x);}
+  vec4 taylorInvSqrt4(vec4 r){return 1.79284291400159-0.85373472095314*r;}
+  float snoise(vec3 v){
+    const vec2 C=vec2(1.0/6.0,1.0/3.0);
+    const vec4 D=vec4(0.0,0.5,1.0,2.0);
+    vec3 i=floor(v+dot(v,C.yyy));
+    vec3 x0=v-i+dot(i,C.xxx);
+    vec3 g=step(x0.yzx,x0.xyz);
+    vec3 l=1.0-g;
+    vec3 i1=min(g.xyz,l.zxy);
+    vec3 i2=max(g.xyz,l.zxy);
+    vec3 x1=x0-i1+C.xxx;
+    vec3 x2=x0-i2+C.yyy;
+    vec3 x3=x0-D.yyy;
+    i=mod289v3(i);
+    vec4 p=permute4(permute4(permute4(
+      i.z+vec4(0.0,i1.z,i2.z,1.0))
+      +i.y+vec4(0.0,i1.y,i2.y,1.0))
+      +i.x+vec4(0.0,i1.x,i2.x,1.0));
+    float n_=0.142857142857;
+    vec3 ns=n_*D.wyz-D.xzx;
+    vec4 j=p-49.0*floor(p*ns.z*ns.z);
+    vec4 x_=floor(j*ns.z);
+    vec4 y_=floor(j-7.0*x_);
+    vec4 xv=x_*ns.x+ns.yyyy;
+    vec4 yv=y_*ns.x+ns.yyyy;
+    vec4 h=1.0-abs(xv)-abs(yv);
+    vec4 b0=vec4(xv.xy,yv.xy);
+    vec4 b1=vec4(xv.zw,yv.zw);
+    vec4 s0=floor(b0)*2.0+1.0;
+    vec4 s1=floor(b1)*2.0+1.0;
+    vec4 sh=-step(h,vec4(0.0));
+    vec4 a0=b0.xzyw+s0.xzyw*sh.xxyy;
+    vec4 a1=b1.xzyw+s1.xzyw*sh.zzww;
+    vec3 p0=vec3(a0.xy,h.x);
+    vec3 p1=vec3(a0.zw,h.y);
+    vec3 p2=vec3(a1.xy,h.z);
+    vec3 p3=vec3(a1.zw,h.w);
+    vec4 norm=taylorInvSqrt4(vec4(dot(p0,p0),dot(p1,p1),dot(p2,p2),dot(p3,p3)));
+    p0*=norm.x;p1*=norm.y;p2*=norm.z;p3*=norm.w;
+    vec4 m=max(0.6-vec4(dot(x0,x0),dot(x1,x1),dot(x2,x2),dot(x3,x3)),0.0);
+    m=m*m;
+    return 42.0*dot(m*m,vec4(dot(p0,x0),dot(p1,x1),dot(p2,x2),dot(p3,x3)));
+  }
+`;
+
+const coreShaderMaterial = new THREE.ShaderMaterial({
+  uniforms: {
+    uTime:          { value: 0 },
+    uNoiseAmp:      { value: 0.28 },
+    uNoiseFreq:     { value: 1.0 },
+    uNoiseSpeed:    { value: 0.42 },
+    uDetailAmp:     { value: 0.06 },
+    uDetailFreq:    { value: 2.8 },
+    uColor1:        { value: new THREE.Color(0x5db86e) },
+    uColor2:        { value: new THREE.Color(0xe8d5c8) },
+    uColorDark:     { value: new THREE.Color(0x0f2e18) },
+    uFresnelPow:    { value: 2.8 },
+    uFresnelStr:    { value: 0.65 },
+    uEmissiveStr:   { value: 0.06 },
+    uGlobalAlpha:   { value: 1.0 },
+    uScrollProgress:{ value: 0.0 },
+    uRipplePos:     { value: new THREE.Vector3(999, 999, 999) },
+    uRippleAge:     { value: 99.0 },
+  },
+  vertexShader: _VERT_NOISE + `
+    uniform float uTime;
+    uniform float uNoiseAmp;
+    uniform float uNoiseFreq;
+    uniform float uNoiseSpeed;
+    uniform float uDetailAmp;
+    uniform float uDetailFreq;
+    uniform vec3  uRipplePos;
+    uniform float uRippleAge;
+
+    varying vec3  vNormal;
+    varying vec3  vWorldPos;
+    varying float vDisp;
+
+    void main() {
+      vec3 pos = position;
+      vec3 n   = normalize(normal);
+
+      // Primary + detail noise displacement
+      float n1 = snoise(pos * uNoiseFreq + uTime * uNoiseSpeed);
+      float n2 = snoise(pos * uDetailFreq + uTime * uNoiseSpeed * 1.8 + vec3(17.5, 3.2, 8.1));
+      float disp = n1 * uNoiseAmp + n2 * uDetailAmp;
+
+      // Idle breath
+      disp += sin(uTime * 0.38) * 0.022;
+
+      // Cursor ripple (world-space)
+      vec3 wInit = (modelMatrix * vec4(pos, 1.0)).xyz;
+      float rDist = length(wInit - uRipplePos);
+      disp += sin(rDist * 6.0 - uRippleAge * 5.0) * exp(-rDist * 1.8) * exp(-uRippleAge * 2.5) * 0.18;
+
+      // ── Normal correction via noise gradient (central differences) ──
+      float eps = 0.025;
+      float dNx = snoise((pos + vec3(eps,0,0)) * uNoiseFreq + uTime * uNoiseSpeed)
+                - snoise((pos - vec3(eps,0,0)) * uNoiseFreq + uTime * uNoiseSpeed);
+      float dNy = snoise((pos + vec3(0,eps,0)) * uNoiseFreq + uTime * uNoiseSpeed)
+                - snoise((pos - vec3(0,eps,0)) * uNoiseFreq + uTime * uNoiseSpeed);
+      float dNz = snoise((pos + vec3(0,0,eps)) * uNoiseFreq + uTime * uNoiseSpeed)
+                - snoise((pos - vec3(0,0,eps)) * uNoiseFreq + uTime * uNoiseSpeed);
+      vec3 noiseGrad   = vec3(dNx, dNy, dNz) / (2.0 * eps);
+      vec3 correctedN  = normalize(n - uNoiseAmp * noiseGrad);
+
+      pos      += n * disp;
+      vDisp     = disp;
+      vWorldPos = (modelMatrix * vec4(pos, 1.0)).xyz;
+      vNormal   = normalize(normalMatrix * correctedN);
+
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+    }
+  `,
+  fragmentShader: `
+    uniform vec3  uColor1;
+    uniform vec3  uColor2;
+    uniform vec3  uColorDark;
+    uniform float uFresnelPow;
+    uniform float uFresnelStr;
+    uniform float uEmissiveStr;
+    uniform float uTime;
+    uniform float uGlobalAlpha;
+
+    varying vec3  vNormal;
+    varying vec3  vWorldPos;
+    varying float vDisp;
+
+    void main() {
+      vec3 norm = normalize(vNormal);
+
+      // Y-based color gradient
+      float t = clamp(vWorldPos.y * 0.55 + 0.5, 0.0, 1.0);
+      vec3 baseColor = mix(uColorDark, mix(uColor2, uColor1, t), t * 0.85 + 0.15);
+
+      // Displacement tint
+      float dispN = clamp(vDisp * 1.6 + 0.45, 0.0, 1.0);
+      baseColor = mix(baseColor, uColor1 * 1.15, dispN * 0.16);
+
+      // View direction
+      vec3 viewDir = normalize(cameraPosition - vWorldPos);
+      float NdotV  = max(dot(norm, viewDir), 0.0);
+
+      // Fresnel rim
+      float fresnel  = pow(1.0 - NdotV, uFresnelPow);
+      vec3  rimColor = mix(uColor1 * 1.6, vec3(1.0), 0.35);
+      baseColor = mix(baseColor, rimColor, fresnel * uFresnelStr);
+
+      // ── Lighting ──
+      // Key light
+      vec3  kLight = normalize(vec3(2.5, 4.0, 3.5));
+      float NdotL  = max(dot(norm, kLight), 0.0);
+      // Fill light (left, soft)
+      vec3  fLight = normalize(vec3(-1.8, 0.5, 2.0));
+      float NdotF  = max(dot(norm, fLight), 0.0) * 0.20;
+      // Back-rim light
+      vec3  bLight = normalize(vec3(1.0, -0.5, -3.0));
+      float NdotB  = max(dot(norm, bLight), 0.0) * 0.12;
+
+      vec3 diffuse = baseColor * (0.06 + NdotL * 0.82 + NdotF + NdotB);
+
+      // Specular — tight lobe
+      vec3  halfDir = normalize(kLight + viewDir);
+      float spec    = pow(max(dot(norm, halfDir), 0.0), 72.0);
+      vec3  specCol = mix(vec3(1.0), uColor1 * 2.0, 0.2);
+      diffuse += spec * 0.60 * specCol;
+
+      // Specular — wide secondary lobe
+      float spec2 = pow(max(dot(norm, halfDir), 0.0), 16.0);
+      diffuse += spec2 * 0.10 * vec3(1.0);
+
+      // Emissive inner glow (restrained — just warmth, not wash-out)
+      float pulse   = 0.75 + sin(uTime * 0.7) * 0.25;
+      vec3  emissive = uColor1 * uEmissiveStr * (0.35 + dispN * 0.65) * pulse;
+
+      float alpha = (0.90 + fresnel * 0.09) * uGlobalAlpha;
+      gl_FragColor = vec4(diffuse + emissive, alpha);
+    }
+  `,
   transparent: true,
-  opacity: 0.92,
+  side: THREE.FrontSide,
 });
+
+// Alias so existing refs compile
+const coreMaterial = coreShaderMaterial;
 
 const coreMesh = new THREE.Mesh(coreGeometry, coreMaterial);
 scene.add(coreMesh);
@@ -416,89 +567,107 @@ ring2.rotation.x = Math.PI * 0.7;
 ring2.rotation.y = Math.PI * 0.3;
 scene.add(ring2);
 
-// ============================================
-// ENVIRONMENT MAP (simple gradient)
-// ============================================
-const pmremGenerator = new THREE.PMREMGenerator(renderer);
-const envScene = new THREE.Scene();
-const envGeo = new THREE.SphereGeometry(10, 32, 32);
-const envMat = new THREE.MeshBasicMaterial({
-  color: 0xcccccc,
-  side: THREE.BackSide,
-});
-envScene.add(new THREE.Mesh(envGeo, envMat));
-envScene.add(new THREE.AmbientLight(0xffffff, 1));
-const envMap = pmremGenerator.fromScene(envScene).texture;
-coreMaterial.envMap = envMap;
-pmremGenerator.dispose();
+// (Environment map removed — ShaderMaterial handles lighting in GLSL)
 
 // ============================================
-// MORPH THE CORE GEOMETRY WITH NOISE
+// SCULPTURE PARAMS — lerp + apply to GPU uniforms
 // ============================================
-function morphCore(time, seasonConfig) {
-  const positions = coreGeometry.attributes.position.array;
-  const speed = seasonConfig.morphSpeed;
-  const amp = seasonConfig.morphAmplitude;
-  const nScale = seasonConfig.noiseScale;
+function lerpSculptureParams(seasonA, seasonB, t) {
+  const a = SCULPT_CONFIG[seasonA];
+  const b = SCULPT_CONFIG[seasonB];
+  const le = (av, bv) => av + (bv - av) * t;
+  return {
+    noiseAmp:    le(a.noiseAmp, b.noiseAmp),
+    noiseFreq:   le(a.noiseFreq, b.noiseFreq),
+    noiseSpeed:  le(a.noiseSpeed, b.noiseSpeed),
+    detailAmp:   le(a.detailAmp, b.detailAmp),
+    detailFreq:  le(a.detailFreq, b.detailFreq),
+    color1:      new THREE.Color().lerpColors(a.color1, b.color1, t),
+    color2:      new THREE.Color().lerpColors(a.color2, b.color2, t),
+    colorDark:   new THREE.Color().lerpColors(a.colorDark, b.colorDark, t),
+    fresnelPow:  le(a.fresnelPow, b.fresnelPow),
+    fresnelStr:  le(a.fresnelStr, b.fresnelStr),
+    emissiveStr: le(a.emissiveStr, b.emissiveStr),
+  };
+}
 
-  for (let i = 0; i < positions.length; i += 3) {
-    const ox = originalPositions[i];
-    const oy = originalPositions[i + 1];
-    const oz = originalPositions[i + 2];
-
-    const n = noise3D(
-      ox * nScale + time * speed * 0.3,
-      oy * nScale + time * speed * 0.2,
-      oz * nScale + time * speed * 0.1
-    );
-
-    const len = Math.sqrt(ox * ox + oy * oy + oz * oz);
-    const nx = ox / len;
-    const ny = oy / len;
-    const nz = oz / len;
-
-    positions[i] = ox + nx * n * amp;
-    positions[i + 1] = oy + ny * n * amp;
-    positions[i + 2] = oz + nz * n * amp;
-  }
-
-  coreGeometry.attributes.position.needsUpdate = true;
-  coreGeometry.computeVertexNormals();
+function applySculptureParams(params) {
+  const u = coreShaderMaterial.uniforms;
+  u.uNoiseAmp.value   = params.noiseAmp;
+  u.uNoiseFreq.value  = params.noiseFreq;
+  u.uNoiseSpeed.value = params.noiseSpeed;
+  u.uDetailAmp.value  = params.detailAmp;
+  u.uDetailFreq.value = params.detailFreq;
+  u.uColor1.value.copy(params.color1);
+  u.uColor2.value.copy(params.color2);
+  u.uColorDark.value.copy(params.colorDark);
+  u.uFresnelPow.value  = params.fresnelPow;
+  u.uFresnelStr.value  = params.fresnelStr;
+  u.uEmissiveStr.value = params.emissiveStr;
 }
 
 // ============================================
-// ANIMATE PARTICLES
+// ANIMATE PARTICLES — season-specific behaviors
 // ============================================
 function animateParticles(time, seasonConfig) {
   const positions = particleGeometry.attributes.position.array;
   const drift = seasonConfig.particleDrift;
+  const season = seasonConfig.name.toLowerCase();
+  const spread = seasonConfig.particleSpread;
 
   for (let i = 0; i < PARTICLE_COUNT; i++) {
-    const speed = particleSeeds[i * 4];
-    particleSeeds[i * 4 + 1];
+    const speed      = particleSeeds[i * 4];
     const orbitPhase = particleSeeds[i * 4 + 2];
     const floatPhase = particleSeeds[i * 4 + 3];
 
-    const angle = orbitPhase + time * speed * 60;
-    const floatY = Math.sin(time * 0.5 + floatPhase) * 0.15;
+    const py = positions[i * 3 + 1];
 
-    positions[i * 3] += Math.sin(angle) * 0.002 + drift.x;
-    positions[i * 3 + 1] += floatY * 0.003 + drift.y;
-    positions[i * 3 + 2] += Math.cos(angle) * 0.002 + drift.z;
+    if (season === 'spring') {
+      // Pollen: gentle upward spiral
+      const angle = orbitPhase + time * speed * 30;
+      positions[i * 3]     += Math.sin(angle) * 0.003 + drift.x;
+      positions[i * 3 + 1] += 0.003 + Math.sin(time * 0.3 + floatPhase) * 0.001 + drift.y;
+      positions[i * 3 + 2] += Math.cos(angle) * 0.002 + drift.z;
+    } else if (season === 'summer') {
+      // Sparks: fast erratic bursts
+      const angle = orbitPhase + time * speed * 80;
+      const burst = Math.sin(time * 3.0 + floatPhase * 7.0) * 0.004;
+      positions[i * 3]     += Math.sin(angle) * 0.005 + drift.x + burst;
+      positions[i * 3 + 1] += drift.y + Math.cos(time * 2.0 + floatPhase) * 0.003;
+      positions[i * 3 + 2] += Math.cos(angle) * 0.005 + drift.z;
+    } else if (season === 'autumn') {
+      // Leaves: falling + sideways tumble
+      const tumble = Math.sin(time * 0.8 + floatPhase * 3.0) * 0.004;
+      positions[i * 3]     += tumble + Math.sin(time * 0.5 + orbitPhase) * 0.002 + drift.x;
+      positions[i * 3 + 1] += drift.y - 0.002;
+      positions[i * 3 + 2] += Math.cos(time * 0.6 + floatPhase) * 0.002 + drift.z;
+    } else {
+      // Winter: slow drift, occasional gust
+      const gust = Math.sin(time * 0.15 + orbitPhase) * 0.0015;
+      positions[i * 3]     += gust + drift.x;
+      positions[i * 3 + 1] += drift.y - 0.0008;
+      positions[i * 3 + 2] += drift.z * 0.5;
+    }
 
-    const dist = Math.sqrt(
-      positions[i * 3] ** 2 +
-      positions[i * 3 + 1] ** 2 +
-      positions[i * 3 + 2] ** 2
-    );
+    // Boundary check / reset
+    const px = positions[i * 3], pz = positions[i * 3 + 2];
+    const dist = Math.sqrt(px * px + py * py + pz * pz);
+    const fallen = (season === 'autumn' || season === 'winter') && py < -spread * 1.2;
 
-    if (dist > seasonConfig.particleSpread * 2 || dist < 0.5) {
-      const theta = Math.random() * Math.PI * 2;
-      const phi = Math.acos(2 * Math.random() - 1);
-      const r = seasonConfig.particleSpread * (0.6 + Math.random() * 0.4);
-      positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
-      positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
-      positions[i * 3 + 2] = r * Math.cos(phi);
+    if (dist > spread * 2.2 || fallen) {
+      if (season === 'autumn' || season === 'winter') {
+        // Respawn at top
+        positions[i * 3]     = (Math.random() - 0.5) * spread * 1.6;
+        positions[i * 3 + 1] = spread * (0.9 + Math.random() * 0.5);
+        positions[i * 3 + 2] = (Math.random() - 0.5) * spread * 1.6;
+      } else {
+        const theta = Math.random() * Math.PI * 2;
+        const phi   = Math.acos(2 * Math.random() - 1);
+        const r     = spread * (0.6 + Math.random() * 0.5);
+        positions[i * 3]     = r * Math.sin(phi) * Math.cos(theta);
+        positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
+        positions[i * 3 + 2] = r * Math.cos(phi);
+      }
     }
   }
 
@@ -608,77 +777,50 @@ function updateSeasonUI(season, cfg) {
 }
 
 function updateThreeColors(cfg) {
-  gsap.to(coreMaterial.color, {
-    r: cfg.coreColor.r, g: cfg.coreColor.g, b: cfg.coreColor.b,
-    duration: 1.2, ease: 'power2.inOut'
+  const season = cfg.name.toLowerCase();
+  const scfg = SCULPT_CONFIG[season];
+  const u = coreShaderMaterial.uniforms;
+
+  // Animate shader uniforms (GPU blob colors + surface properties)
+  gsap.to(u.uColor1.value,    { r: scfg.color1.r, g: scfg.color1.g, b: scfg.color1.b, duration: 1.2, ease: 'power2.inOut' });
+  gsap.to(u.uColor2.value,    { r: scfg.color2.r, g: scfg.color2.g, b: scfg.color2.b, duration: 1.2, ease: 'power2.inOut' });
+  gsap.to(u.uColorDark.value, { r: scfg.colorDark.r, g: scfg.colorDark.g, b: scfg.colorDark.b, duration: 1.2, ease: 'power2.inOut' });
+  gsap.to(u.uFresnelPow,  { value: scfg.fresnelPow,  duration: 1.4, ease: 'power2.inOut' });
+  gsap.to(u.uFresnelStr,  { value: scfg.fresnelStr,  duration: 1.4, ease: 'power2.inOut' });
+  gsap.to(u.uEmissiveStr, { value: scfg.emissiveStr, duration: 1.4, ease: 'power2.inOut' });
+  gsap.to(u.uNoiseAmp,    { value: scfg.noiseAmp,    duration: 1.6, ease: 'power2.inOut' });
+  gsap.to(u.uNoiseFreq,   { value: scfg.noiseFreq,   duration: 1.6, ease: 'power2.inOut' });
+  gsap.to(u.uNoiseSpeed,  { value: scfg.noiseSpeed,  duration: 1.6, ease: 'power2.inOut' });
+
+  // Scene colors
+  gsap.to(glowMaterial.color, { r: cfg.glowColor.r,       g: cfg.glowColor.g,       b: cfg.glowColor.b,       duration: 1.2, ease: 'power2.inOut' });
+  gsap.to(pointLight1.color,  { r: cfg.particleColor1.r,  g: cfg.particleColor1.g,  b: cfg.particleColor1.b,  duration: 1.2, ease: 'power2.inOut' });
+  gsap.to(pointLight2.color,  { r: cfg.particleColor2.r,  g: cfg.particleColor2.g,  b: cfg.particleColor2.b,  duration: 1.2, ease: 'power2.inOut' });
+  gsap.to(ringMaterial.color, { r: cfg.particleColor1.r,  g: cfg.particleColor1.g,  b: cfg.particleColor1.b,  duration: 1,   ease: 'power2.inOut' });
+  gsap.to(ring2Material.color,{ r: cfg.particleColor2.r,  g: cfg.particleColor2.g,  b: cfg.particleColor2.b,  duration: 1,   ease: 'power2.inOut' });
+
+  tendrils.forEach(t => {
+    gsap.to(t.material.color, { r: cfg.particleColor1.r, g: cfg.particleColor1.g, b: cfg.particleColor1.b, duration: 1.2, ease: 'power2.inOut' });
   });
 
-  gsap.to(glowMaterial.color, {
-    r: cfg.glowColor.r, g: cfg.glowColor.g, b: cfg.glowColor.b,
-    duration: 1.2, ease: 'power2.inOut'
-  });
+  // Glow opacity per season
+  const glowOpacity = { spring: 0.08, summer: 0.12, autumn: 0.05, winter: 0.04 };
+  gsap.to(glowMaterial, { opacity: glowOpacity[season] ?? 0.08, duration: 1.2 });
 
-  gsap.to(pointLight1.color, {
-    r: cfg.particleColor1.r, g: cfg.particleColor1.g, b: cfg.particleColor1.b,
-    duration: 1.2, ease: 'power2.inOut'
-  });
-
-  gsap.to(pointLight2.color, {
-    r: cfg.particleColor2.r, g: cfg.particleColor2.g, b: cfg.particleColor2.b,
-    duration: 1.2, ease: 'power2.inOut'
-  });
-
-  gsap.to(ringMaterial.color, {
-    r: cfg.particleColor1.r, g: cfg.particleColor1.g, b: cfg.particleColor1.b,
-    duration: 1, ease: 'power2.inOut'
-  });
-
-  gsap.to(ring2Material.color, {
-    r: cfg.particleColor2.r, g: cfg.particleColor2.g, b: cfg.particleColor2.b,
-    duration: 1, ease: 'power2.inOut'
-  });
-
-  // Animate particle colors
+  // Particle colors
   const colors = particleGeometry.attributes.color.array;
   for (let i = 0; i < PARTICLE_COUNT; i++) {
     const choice = Math.random();
     const col = choice < 0.4 ? cfg.particleColor1 :
                 choice < 0.7 ? cfg.particleColor2 : cfg.particleColor3;
-
     gsap.to(colors, {
-      [i * 3]: col.r,
-      [i * 3 + 1]: col.g,
-      [i * 3 + 2]: col.b,
-      duration: 1.5,
-      ease: 'power2.inOut',
-      onUpdate: () => {
-        particleGeometry.attributes.color.needsUpdate = true;
-      }
+      [i * 3]: col.r, [i * 3 + 1]: col.g, [i * 3 + 2]: col.b,
+      duration: 1.5, ease: 'power2.inOut',
+      onUpdate: () => { particleGeometry.attributes.color.needsUpdate = true; },
     });
   }
 
-  // Update tendril colors
-  tendrils.forEach(t => {
-    gsap.to(t.material.color, {
-      r: cfg.particleColor1.r, g: cfg.particleColor1.g, b: cfg.particleColor1.b,
-      duration: 1.2, ease: 'power2.inOut'
-    });
-  });
-
-  // Material adjustments per season
-  if (cfg.name === 'WINTER') {
-    gsap.to(coreMaterial, { metalness: 0.3, roughness: 0.2, transmission: 0.3, clearcoat: 0.8, duration: 1.2 });
-    gsap.to(glowMaterial, { opacity: 0.04, duration: 1.2 });
-  } else if (cfg.name === 'SUMMER') {
-    gsap.to(coreMaterial, { metalness: 0.05, roughness: 0.4, transmission: 0.2, clearcoat: 0.3, duration: 1.2 });
-    gsap.to(glowMaterial, { opacity: 0.12, duration: 1.2 });
-  } else if (cfg.name === 'AUTUMN') {
-    gsap.to(coreMaterial, { metalness: 0.15, roughness: 0.6, transmission: 0.05, clearcoat: 0.2, duration: 1.2 });
-    gsap.to(glowMaterial, { opacity: 0.06, duration: 1.2 });
-  } else {
-    gsap.to(coreMaterial, { metalness: 0.1, roughness: 0.5, transmission: 0.15, clearcoat: 0.4, duration: 1.2 });
-    gsap.to(glowMaterial, { opacity: 0.08, duration: 1.2 });
-  }
+  _crossfadeToSeason(season);
 }
 
 // ============================================
@@ -713,8 +855,8 @@ function initScrollAnimations() {
   });
 
   // Fade core on scroll
-  gsap.to(coreMaterial, {
-    opacity: 0.3,
+  gsap.to(coreShaderMaterial.uniforms.uGlobalAlpha, {
+    value: 0.3,
     scrollTrigger: {
       trigger: '.section-statement',
       start: 'top center',
@@ -724,8 +866,8 @@ function initScrollAnimations() {
   });
 
   // Bring back for epochs
-  gsap.to(coreMaterial, {
-    opacity: 0.92,
+  gsap.to(coreShaderMaterial.uniforms.uGlobalAlpha, {
+    value: 1.0,
     scrollTrigger: {
       trigger: '.section-epochs',
       start: 'top center',
@@ -767,11 +909,23 @@ function initScrollAnimations() {
 }
 
 // ============================================
-// MOUSE TRACKING
+// MOUSE TRACKING + BLOB RIPPLE
 // ============================================
 function onMouseMove(e) {
   mouse.targetX = (e.clientX / window.innerWidth - 0.5) * 2;
   mouse.targetY = (e.clientY / window.innerHeight - 0.5) * 2;
+
+  // Ripple: raycast against blob to get hit point
+  ripplePointer.set(
+    (e.clientX / window.innerWidth) * 2 - 1,
+    -(e.clientY / window.innerHeight) * 2 + 1
+  );
+  blobRaycaster.setFromCamera(ripplePointer, camera);
+  const hits = blobRaycaster.intersectObject(coreMesh);
+  if (hits.length > 0) {
+    coreShaderMaterial.uniforms.uRipplePos.value.copy(hits[0].point);
+    coreShaderMaterial.uniforms.uRippleAge.value = 0;
+  }
 }
 
 // ============================================
@@ -798,8 +952,9 @@ function animate() {
   mouse.x += (mouse.targetX - mouse.x) * 0.05;
   mouse.y += (mouse.targetY - mouse.y) * 0.05;
 
-  // Morph core
-  morphCore(time, cfg);
+  // GPU shader time + ripple age
+  coreShaderMaterial.uniforms.uTime.value = time;
+  coreShaderMaterial.uniforms.uRippleAge.value += 0.018;
 
   // Core rotation with mouse influence
   coreMesh.rotation.y += cfg.rotationSpeed;
@@ -1398,6 +1553,187 @@ function updateStmtCard(season) {
 }
 
 // ============================================
+// SCROLL-DRIVEN SEASONS ENGINE
+// ============================================
+function initScrollDrivenSeasons() {
+  [
+    { id: 'sectionSummer', enter: 'summer', back: 'spring' },
+    { id: 'sectionAutumn', enter: 'autumn', back: 'summer' },
+    { id: 'sectionWinter', enter: 'winter', back: 'autumn' },
+  ].forEach(({ id, enter, back }) => {
+    ScrollTrigger.create({
+      trigger: `#${id}`,
+      start: 'top 55%',
+      onEnter:     () => _triggerSeasonChange(enter),
+      onLeaveBack: () => _triggerSeasonChange(back),
+    });
+  });
+}
+
+function _triggerSeasonChange(season) {
+  const newIndex = SEASONS.indexOf(season);
+  if (newIndex === currentSeasonIndex) return;
+  currentSeasonIndex = newIndex;
+  const cfg = SEASON_CONFIG[season];
+  document.body.dataset.season = season;
+  updateSeasonUI(season, cfg);
+  _animateSculptureToSeason(season);
+  _updateSceneColors(cfg);
+  _updateParticleColors(cfg);
+  _crossfadeToSeason(season);
+}
+
+function _animateSculptureToSeason(season) {
+  const scfg = SCULPT_CONFIG[season];
+  const u    = coreShaderMaterial.uniforms;
+  const TRANS = {
+    spring: { dur: 1.6, ease: 'power3.inOut' },
+    summer: { dur: 0.85, ease: 'power4.out' },
+    autumn: { dur: 2.0,  ease: 'power2.inOut' },
+    winter: { dur: 4.0,  ease: 'power1.inOut' },
+  };
+  const { dur, ease } = TRANS[season];
+
+  gsap.to(u.uNoiseAmp,        { value: scfg.noiseAmp,    duration: dur,        ease });
+  gsap.to(u.uNoiseFreq,       { value: scfg.noiseFreq,   duration: dur,        ease });
+  gsap.to(u.uNoiseSpeed,      { value: scfg.noiseSpeed,  duration: dur,        ease });
+  gsap.to(u.uDetailAmp,       { value: scfg.detailAmp,   duration: dur * 0.8,  ease });
+  gsap.to(u.uDetailFreq,      { value: scfg.detailFreq,  duration: dur * 0.8,  ease });
+  gsap.to(u.uColor1.value,    { r: scfg.color1.r,    g: scfg.color1.g,    b: scfg.color1.b,    duration: dur * 0.85, ease });
+  gsap.to(u.uColor2.value,    { r: scfg.color2.r,    g: scfg.color2.g,    b: scfg.color2.b,    duration: dur * 0.85, ease });
+  gsap.to(u.uColorDark.value, { r: scfg.colorDark.r, g: scfg.colorDark.g, b: scfg.colorDark.b, duration: dur * 0.85, ease });
+  gsap.to(u.uFresnelPow,      { value: scfg.fresnelPow,  duration: dur * 1.1,  ease });
+  gsap.to(u.uFresnelStr,      { value: scfg.fresnelStr,  duration: dur * 1.1,  ease });
+  gsap.to(u.uEmissiveStr,     { value: scfg.emissiveStr, duration: dur * 0.75, ease });
+}
+
+function _updateParticleColors(cfg) {
+  const colors = particleGeometry.attributes.color.array;
+  for (let i = 0; i < PARTICLE_COUNT; i++) {
+    const c = Math.random();
+    const col = c < 0.4 ? cfg.particleColor1 : c < 0.7 ? cfg.particleColor2 : cfg.particleColor3;
+    colors[i * 3] = col.r; colors[i * 3 + 1] = col.g; colors[i * 3 + 2] = col.b;
+  }
+  particleGeometry.attributes.color.needsUpdate = true;
+}
+
+function _updateSceneColors(cfg) {
+  gsap.to(glowMaterial.color,  { r: cfg.glowColor.r,      g: cfg.glowColor.g,      b: cfg.glowColor.b,      duration: 0.9 });
+  gsap.to(pointLight1.color,   { r: cfg.particleColor1.r, g: cfg.particleColor1.g, b: cfg.particleColor1.b, duration: 0.9 });
+  gsap.to(pointLight2.color,   { r: cfg.particleColor2.r, g: cfg.particleColor2.g, b: cfg.particleColor2.b, duration: 0.9 });
+  gsap.to(ringMaterial.color,  { r: cfg.particleColor1.r, g: cfg.particleColor1.g, b: cfg.particleColor1.b, duration: 0.8 });
+  gsap.to(ring2Material.color, { r: cfg.particleColor2.r, g: cfg.particleColor2.g, b: cfg.particleColor2.b, duration: 0.8 });
+  tendrils.forEach(t => gsap.to(t.material.color, { r: cfg.particleColor1.r, g: cfg.particleColor1.g, b: cfg.particleColor1.b, duration: 0.9 }));
+}
+
+// ============================================
+// WEB AUDIO — ambient season soundscapes
+// ============================================
+let audioCtx = null;
+let audioNodes = {};
+let audioActive = false;
+
+function initAudio() {
+  const btn = document.getElementById('audioBtn');
+  if (!btn) return;
+
+  btn.addEventListener('click', () => {
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      _buildSeasonAudio();
+    }
+    audioActive = !audioActive;
+    btn.classList.toggle('active', audioActive);
+    btn.querySelector('.audio-icon').textContent = audioActive ? '♫' : '♪';
+
+    if (audioActive) {
+      _crossfadeToSeason(SEASONS[currentSeasonIndex]);
+    } else {
+      Object.values(audioNodes).forEach(node => {
+        if (node?.gainNode) node.gainNode.gain.setTargetAtTime(0, audioCtx.currentTime, 0.5);
+      });
+    }
+  });
+}
+
+function _buildSeasonAudio() {
+  const FILTER_CFG = {
+    spring: { type: 'bandpass', freq: 420,  q: 0.4 },
+    summer: { type: 'highpass', freq: 1400, q: 0.3 },
+    autumn: { type: 'lowpass',  freq: 580,  q: 0.9 },
+    winter: { type: 'lowpass',  freq: 180,  q: 1.4 },
+  };
+
+  SEASONS.forEach(season => {
+    // Pink noise synthesis (Paul Kellet's method)
+    const bufSize = audioCtx.sampleRate * 4;
+    const buf = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
+    const data = buf.getChannelData(0);
+    let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+    for (let i = 0; i < bufSize; i++) {
+      const w = Math.random() * 2 - 1;
+      b0 = 0.99886 * b0 + w * 0.0555179; b1 = 0.99332 * b1 + w * 0.0750759;
+      b2 = 0.96900 * b2 + w * 0.1538520; b3 = 0.86650 * b3 + w * 0.3104856;
+      b4 = 0.55000 * b4 + w * 0.5329522; b5 = -0.7616 * b5 - w * 0.0168980;
+      data[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + w * 0.5362) * 0.11;
+      b6 = w * 0.115926;
+    }
+
+    const src = audioCtx.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+
+    const fc = FILTER_CFG[season];
+    const filt = audioCtx.createBiquadFilter();
+    filt.type = fc.type; filt.frequency.value = fc.freq; filt.Q.value = fc.q;
+
+    const gain = audioCtx.createGain();
+    gain.gain.value = 0;
+
+    src.connect(filt); filt.connect(gain); gain.connect(audioCtx.destination);
+    src.start();
+    audioNodes[season] = { src, filt, gainNode: gain };
+  });
+}
+
+function _crossfadeToSeason(season) {
+  if (!audioCtx || !audioActive) return;
+  const TARGET = { spring: 0.15, summer: 0.12, autumn: 0.18, winter: 0.08 };
+  SEASONS.forEach(s => {
+    const node = audioNodes[s];
+    if (!node) return;
+    node.gainNode.gain.setTargetAtTime(s === season ? TARGET[s] : 0, audioCtx.currentTime, 0.8);
+  });
+}
+
+// ============================================
+// SEASON MOMENT ENTRANCE ANIMATIONS
+// ============================================
+function initSeasonMoments() {
+  document.querySelectorAll('.section-season-moment').forEach(section => {
+    const lines  = section.querySelectorAll('.moment-line');
+    const body   = section.querySelector('.moment-body');
+    const data   = section.querySelector('.moment-data');
+    const glyph  = section.querySelector('.moment-glyph');
+    const eyebrow = section.querySelector('.moment-eyebrow');
+
+    ScrollTrigger.create({
+      trigger: section,
+      start: 'top 65%',
+      once: true,
+      onEnter: () => {
+        const tl = gsap.timeline();
+        if (eyebrow) tl.from(eyebrow, { opacity: 0, y: 12, duration: 0.6, ease: 'power3.out' }, 0);
+        tl.from(lines, { opacity: 0, y: 60, duration: 1.1, stagger: 0.1, ease: 'power4.out' }, 0.1);
+        if (body) tl.from(body, { opacity: 0, y: 24, duration: 0.9, ease: 'power3.out' }, 0.5);
+        if (data) tl.from(data, { opacity: 0, y: 16, duration: 0.7, ease: 'power3.out' }, 0.7);
+        if (glyph) tl.from(glyph, { opacity: 0, scale: 0.88, duration: 2.0, ease: 'power2.out' }, 0);
+      },
+    });
+  });
+}
+
+// ============================================
 // INIT
 // ============================================
 function init() {
@@ -1441,12 +1777,15 @@ function init() {
   // Start systems
   initScrollReveal();
   initScrollAnimations();
+  initScrollDrivenSeasons();
   initEpochCards();
   initEpochVisuals();
   initStmtRing();
   initStmtCard();
   initStmtText();
   initCursor();
+  initAudio();
+  initSeasonMoments();
 
   // Initial reveal animation - cinematic entrance
   const entranceTL = gsap.timeline({ delay: 0.3 });
