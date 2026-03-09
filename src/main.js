@@ -145,8 +145,8 @@ const SCULPT_CONFIG = {
     fresnelPow: 4.2, fresnelStr: 0.36, emissiveStr: 0.07,
   },
   winter: {
-    noiseAmp: 0.05, noiseFreq: 4.5, noiseSpeed: 0.08,
-    detailAmp: 0.13, detailFreq: 16.0,
+    noiseAmp: 0.015, noiseFreq: 1.0, noiseSpeed: 0.05,
+    detailAmp: 0.005, detailFreq: 2.0,
     color1: new THREE.Color(0x8cc8f0), color2: new THREE.Color(0x3a6898), colorDark: new THREE.Color(0x020810),
     fresnelPow: 6.5, fresnelStr: 1.3, emissiveStr: 0.48,
   },
@@ -263,6 +263,27 @@ const _VERT_NOISE = `
   }
 `;
 
+// Voronoi / Worley noise — crystal cell boundaries (crack lines)
+const _VORONOI = `
+  vec2 voronoi3D(vec3 x){
+    vec3 p=floor(x),f=fract(x);
+    float va=8.0,vb=8.0;
+    for(int k=-1;k<=1;k++)
+    for(int j=-1;j<=1;j++)
+    for(int i=-1;i<=1;i++){
+      vec3 g=vec3(float(i),float(j),float(k));
+      vec3 o=fract(sin(vec3(
+        dot(p+g,vec3(127.1,311.7,74.7)),
+        dot(p+g,vec3(269.5,183.3,246.1)),
+        dot(p+g,vec3(113.5,271.9,124.6))
+      ))*43758.5453);
+      vec3 r=g-f+o; float d=dot(r,r);
+      if(d<va){vb=va;va=d;}else if(d<vb){vb=d;}
+    }
+    return vec2(sqrt(va),sqrt(vb));
+  }
+`;
+
 const coreShaderMaterial = new THREE.ShaderMaterial({
   uniforms: {
     uTime:          { value: 0 },
@@ -281,8 +302,9 @@ const coreShaderMaterial = new THREE.ShaderMaterial({
     uScrollProgress:{ value: 0.0 },
     uRipplePos:     { value: new THREE.Vector3(999, 999, 999) },
     uRippleAge:     { value: 99.0 },
+    uFreezeProgress:{ value: 0.0 },
   },
-  vertexShader: _VERT_NOISE + `
+  vertexShader: _VERT_NOISE + _VORONOI + `
     uniform float uTime;
     uniform float uNoiseAmp;
     uniform float uNoiseFreq;
@@ -291,10 +313,12 @@ const coreShaderMaterial = new THREE.ShaderMaterial({
     uniform float uDetailFreq;
     uniform vec3  uRipplePos;
     uniform float uRippleAge;
+    uniform float uFreezeProgress;
 
     varying vec3  vNormal;
     varying vec3  vWorldPos;
     varying float vDisp;
+    varying float vFreezeAmt;
 
     void main() {
       vec3 pos = position;
@@ -312,6 +336,30 @@ const coreShaderMaterial = new THREE.ShaderMaterial({
       vec3 wInit = (modelMatrix * vec4(pos, 1.0)).xyz;
       float rDist = length(wInit - uRipplePos);
       disp += sin(rDist * 6.0 - uRippleAge * 5.0) * exp(-rDist * 1.8) * exp(-uRippleAge * 2.5) * 0.18;
+
+      // ── Winter crystallization ──
+      float frzY     = normalize(pos).y;
+      float frzFront = uFreezeProgress * 2.4 - 1.2;
+      float frzAmount = (1.0 - smoothstep(frzFront - 0.06, frzFront + 0.18, frzY))
+                      * step(0.001, uFreezeProgress);
+
+      // Subtle crystal facets: quantized noise → slight geometric variation (NOT spiky)
+      float plateN    = snoise(pos * 2.8 + vec3(20.5, 11.3, 7.1));
+      float plateFacet = (floor(plateN * 5.0) / 5.0) * 0.07;
+
+      // Frost micro-roughness (bumpy frosted-glass surface texture)
+      float frostMicro = snoise(pos * 8.0 + vec3(80.0)) * 0.022
+                       + snoise(pos * 16.0 + vec3(160.0)) * 0.010;
+
+      float crystalDisp = plateFacet + frostMicro;
+
+      // Active freeze-front shimmer (ripple at the freezing boundary)
+      float frzFrontProx = max(0.0, 1.0 - abs(frzY - frzFront) * 8.0)
+                         * step(0.02, uFreezeProgress) * step(uFreezeProgress, 0.98);
+      float frzShimmer = sin(frzY * 20.0 + uTime * 12.0) * frzFrontProx * 0.022;
+
+      disp = mix(disp, crystalDisp, frzAmount) + frzShimmer;
+      vFreezeAmt = frzAmount;
 
       // ── Normal correction via noise gradient (central differences) ──
       float eps = 0.025;
@@ -332,7 +380,7 @@ const coreShaderMaterial = new THREE.ShaderMaterial({
       gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
     }
   `,
-  fragmentShader: `
+  fragmentShader: _VERT_NOISE + _VORONOI + `
     uniform vec3  uColor1;
     uniform vec3  uColor2;
     uniform vec3  uColorDark;
@@ -341,57 +389,95 @@ const coreShaderMaterial = new THREE.ShaderMaterial({
     uniform float uEmissiveStr;
     uniform float uTime;
     uniform float uGlobalAlpha;
+    uniform float uFreezeProgress;
 
     varying vec3  vNormal;
     varying vec3  vWorldPos;
     varying float vDisp;
+    varying float vFreezeAmt;
 
     void main() {
-      vec3 norm = normalize(vNormal);
+      vec3 norm    = normalize(vNormal);
+      vec3 viewDir = normalize(cameraPosition - vWorldPos);
+      float NdotV  = max(dot(norm, viewDir), 0.0);
+      float frozen  = vFreezeAmt;
 
-      // Y-based color gradient
+      // ── Base color (water/organic blob) ──
       float t = clamp(vWorldPos.y * 0.55 + 0.5, 0.0, 1.0);
       vec3 baseColor = mix(uColorDark, mix(uColor2, uColor1, t), t * 0.85 + 0.15);
-
-      // Displacement tint
       float dispN = clamp(vDisp * 1.6 + 0.45, 0.0, 1.0);
       baseColor = mix(baseColor, uColor1 * 1.15, dispN * 0.16);
 
-      // View direction
-      vec3 viewDir = normalize(cameraPosition - vWorldPos);
-      float NdotV  = max(dot(norm, viewDir), 0.0);
+      // ── Frosted ice glass material ──
+      // Layered frost noise — organic surface variation like frosted glass
+      float frostN1 = snoise(vWorldPos * 5.5 + vec3(100.0)) * 0.5 + 0.5;
+      float frostN2 = snoise(vWorldPos * 11.0 + vec3(200.0)) * 0.5 + 0.5;
+      float frostN3 = snoise(vWorldPos * 22.0 + vec3(300.0)) * 0.5 + 0.5;
+      float frostPattern = frostN1 * 0.50 + frostN2 * 0.32 + frostN3 * 0.18;
 
-      // Fresnel rim
+      // Outer frost surface: milky blue-white
+      vec3 frostSurface = mix(vec3(0.48, 0.64, 0.88), vec3(0.88, 0.93, 1.0), frostPattern);
+
+      // Inner ice glow: the blue depth you see when light passes through ice
+      float iceInnerN = snoise(vWorldPos * 2.2 + vec3(55.0)) * 0.5 + 0.5;
+      vec3 iceInner   = mix(vec3(0.06, 0.22, 0.58), vec3(0.28, 0.55, 0.90), iceInnerN);
+
+      // Blend: inner glow shows more at grazing angles (like translucent ice)
+      float rimBlend  = 1.0 - NdotV;
+      vec3 frostColor = mix(iceInner, frostSurface, 0.60 + rimBlend * 0.25);
+
+      // Very faint frost crystal lines (subtle structure, no glow — just slight darkening)
+      vec2  frzV       = voronoi3D(vWorldPos * 2.8 + vec3(10.0));
+      float frostLine  = 1.0 - smoothstep(0.0, 0.12, frzV.y - frzV.x);
+      frostColor = mix(frostColor, frostColor * 0.68, frostLine * 0.30);
+
+      // Apply frost over base
+      baseColor = mix(baseColor, frostColor, frozen);
+
+      // Fresnel — ice has strong rim highlighting
       float fresnel  = pow(1.0 - NdotV, uFresnelPow);
-      vec3  rimColor = mix(uColor1 * 1.6, vec3(1.0), 0.35);
-      baseColor = mix(baseColor, rimColor, fresnel * uFresnelStr);
+      vec3  rimColor = mix(
+        uColor1 * 1.6,
+        mix(vec3(0.72, 0.88, 1.0), vec3(1.0), 0.5),
+        frozen
+      );
+      baseColor = mix(baseColor, rimColor, fresnel * mix(uFresnelStr, uFresnelStr * 1.4, frozen));
 
       // ── Lighting ──
-      // Key light
       vec3  kLight = normalize(vec3(2.5, 4.0, 3.5));
       float NdotL  = max(dot(norm, kLight), 0.0);
-      // Fill light (left, soft)
       vec3  fLight = normalize(vec3(-1.8, 0.5, 2.0));
       float NdotF  = max(dot(norm, fLight), 0.0) * 0.20;
-      // Back-rim light
       vec3  bLight = normalize(vec3(1.0, -0.5, -3.0));
       float NdotB  = max(dot(norm, bLight), 0.0) * 0.12;
 
-      vec3 diffuse = baseColor * (0.06 + NdotL * 0.82 + NdotF + NdotB);
+      // Frosted glass scatters more light uniformly (boosted ambient)
+      float ambient = mix(0.06, 0.16, frozen);
+      vec3 diffuse = baseColor * (ambient + NdotL * 0.80 + NdotF + NdotB);
 
-      // Specular — tight lobe
       vec3  halfDir = normalize(kLight + viewDir);
-      float spec    = pow(max(dot(norm, halfDir), 0.0), 72.0);
-      vec3  specCol = mix(vec3(1.0), uColor1 * 2.0, 0.2);
-      diffuse += spec * 0.60 * specCol;
 
-      // Specular — wide secondary lobe
-      float spec2 = pow(max(dot(norm, halfDir), 0.0), 16.0);
-      diffuse += spec2 * 0.10 * vec3(1.0);
+      // Broad soft specular (frosted surface scatters specular)
+      float specBroad = pow(max(dot(norm, halfDir), 0.0), 24.0);
+      diffuse += specBroad * mix(0.18, 0.35, frozen) * mix(vec3(1.0), vec3(0.80, 0.92, 1.0), frozen);
 
-      // Emissive inner glow (restrained — just warmth, not wash-out)
+      // Tight specular (ice glint)
+      float specTight = pow(max(dot(norm, halfDir), 0.0), 110.0);
+      diffuse += specTight * mix(0.55, 0.90, frozen) * mix(vec3(1.0), vec3(0.82, 0.94, 1.0), frozen);
+
+      // Ice sparkle (small scattered sharp glints — like snow crystals catching light)
+      float sparkleN = snoise(vWorldPos * 20.0 + vec3(77.0));
+      float sparkle  = pow(max(sparkleN, 0.0), 16.0) * frozen * 1.6;
+      diffuse += sparkle * vec3(0.85, 0.93, 1.0);
+
+      // Subsurface ice depth glow (blue light bleeding through from interior)
+      float iceSSS = (1.0 - NdotL * 0.5) * frozen * 0.22;
+      diffuse += vec3(0.04, 0.18, 0.50) * iceSSS;
+
+      // ── Emissive (fades on frozen — ice doesn't glow warmly) ──
       float pulse   = 0.75 + sin(uTime * 0.7) * 0.25;
-      vec3  emissive = uColor1 * uEmissiveStr * (0.35 + dispN * 0.65) * pulse;
+      vec3  emissive = uColor1 * uEmissiveStr * (0.35 + dispN * 0.65) * pulse
+                     * mix(1.0, 0.08, frozen);
 
       float alpha = (0.90 + fresnel * 0.09) * uGlobalAlpha;
       gl_FragColor = vec4(diffuse + emissive, alpha);
@@ -821,6 +907,8 @@ function updateThreeColors(cfg) {
   }
 
   _crossfadeToSeason(season);
+  _applyWinterFreeze(season);
+  if (audioActive) _startSeasonAmbient(season);
 }
 
 // ============================================
@@ -1581,6 +1669,38 @@ function _triggerSeasonChange(season) {
   _updateSceneColors(cfg);
   _updateParticleColors(cfg);
   _crossfadeToSeason(season);
+  if (audioActive) _startSeasonAmbient(season);
+}
+
+// ============================================
+// FREEZE SOUND — procedural ice crackle SFX
+// ============================================
+const _freezingAudio = new Audio('/freezing.mp3');
+_freezingAudio.preload      = 'auto';
+_freezingAudio.volume       = 0.85;
+_freezingAudio.playbackRate = 0.7;
+
+function _playFreezeSound() {
+  if (!audioActive) return;
+  _freezingAudio.currentTime = 0;
+  _freezingAudio.play().catch(() => {});
+}
+
+function _applyWinterFreeze(season) {
+  const u = coreShaderMaterial.uniforms;
+  gsap.killTweensOf(u.uFreezeProgress);
+  if (season === 'winter') {
+    u.uFreezeProgress.value = 0;
+    _playFreezeSound();
+    gsap.to(u.uFreezeProgress, {
+      value: 1.0,
+      duration: 5.5,
+      delay: 0.5,
+      ease: 'power2.in',
+    });
+  } else {
+    u.uFreezeProgress.value = 0;
+  }
 }
 
 function _animateSculptureToSeason(season) {
@@ -1605,6 +1725,7 @@ function _animateSculptureToSeason(season) {
   gsap.to(u.uFresnelPow,      { value: scfg.fresnelPow,  duration: dur * 1.1,  ease });
   gsap.to(u.uFresnelStr,      { value: scfg.fresnelStr,  duration: dur * 1.1,  ease });
   gsap.to(u.uEmissiveStr,     { value: scfg.emissiveStr, duration: dur * 0.75, ease });
+  _applyWinterFreeze(season);
 }
 
 function _updateParticleColors(cfg) {
@@ -1637,23 +1758,32 @@ function initAudio() {
   const btn = document.getElementById('audioBtn');
   if (!btn) return;
 
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  _buildSeasonAudio();
+
   btn.addEventListener('click', () => {
-    if (!audioCtx) {
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      _buildSeasonAudio();
-    }
     audioActive = !audioActive;
     btn.classList.toggle('active', audioActive);
-    btn.querySelector('.audio-icon').textContent = audioActive ? '♫' : '♪';
 
     if (audioActive) {
-      _crossfadeToSeason(SEASONS[currentSeasonIndex]);
-    } else {
-      Object.values(audioNodes).forEach(node => {
-        if (node?.gainNode) node.gainNode.gain.setTargetAtTime(0, audioCtx.currentTime, 0.5);
+      audioCtx.resume().then(() => {
+        _startSeasonAmbient(SEASONS[currentSeasonIndex]);
+        _crossfadeToSeason(SEASONS[currentSeasonIndex]);
       });
+    } else {
+      audioCtx.suspend();
+      _freezingAudio.pause();
+      _freezingAudio.currentTime = 0;
+      _springAmbient.silence();
     }
   });
+}
+
+function _startSeasonAmbient(season) {
+  if (season === 'winter')      { _winterAmbient.start(); _autumnAmbient.stop(); _springAmbient.stop(); }
+  else if (season === 'autumn') { _autumnAmbient.start(); _winterAmbient.stop(); _springAmbient.stop(); }
+  else if (season === 'spring') { _springAmbient.start(); _winterAmbient.stop(); _autumnAmbient.stop(); }
+  else                          { _winterAmbient.stop();  _autumnAmbient.stop(); _springAmbient.stop(); }
 }
 
 function _buildSeasonAudio() {
@@ -1698,13 +1828,210 @@ function _buildSeasonAudio() {
 
 function _crossfadeToSeason(season) {
   if (!audioCtx || !audioActive) return;
-  const TARGET = { spring: 0.15, summer: 0.12, autumn: 0.18, winter: 0.08 };
+  const TARGET = { spring: 0, summer: 0, autumn: 0, winter: 0.08 };
   SEASONS.forEach(s => {
     const node = audioNodes[s];
     if (!node) return;
     node.gainNode.gain.setTargetAtTime(s === season ? TARGET[s] : 0, audioCtx.currentTime, 0.8);
   });
 }
+
+// ============================================
+// SPRING AMBIENT — spring.mp3 via HTMLAudioElement
+// Strategy: start muted immediately (always allowed), unmute on first mousemove.
+// Unmuting a playing audio element needs NO user gesture — only the initial play() does.
+// ============================================
+const _springAudio = new Audio('/spring.mp3');
+_springAudio.loop   = true;
+_springAudio.volume = 0.75;
+
+const _springAmbient = {
+  start() {
+    if (!audioActive) return;
+    _springAudio.muted = false;
+    if (_springAudio.paused) _springAudio.play().catch(() => {});
+  },
+  stop() {
+    // Mute rather than pause — so resuming spring is instant (no play() needed)
+    _springAudio.muted = true;
+  },
+  silence() {
+    // Full stop for when audio is globally disabled
+    _springAudio.muted = true;
+    _springAudio.pause();
+  },
+};
+
+// ============================================
+// WINTER AMBIENT — light atmospheric layer
+// ============================================
+const _winterAmbient = (() => {
+  let masterGain = null;
+  let built      = false;
+
+  function _build() {
+    if (!audioCtx || built) return;
+    built = true;
+
+    masterGain = audioCtx.createGain();
+    masterGain.gain.value = 0;
+    masterGain.connect(audioCtx.destination);
+
+    // Slow master breath — the whole pad inhales/exhales gently
+    const breathLFO = audioCtx.createOscillator();
+    breathLFO.frequency.value = 0.07; // one breath every ~14s
+    const breathAmt = audioCtx.createGain();
+    breathAmt.gain.value = 0.18;
+    breathLFO.connect(breathAmt);
+    breathAmt.connect(masterGain.gain);
+    breathLFO.start();
+
+    // Soft pad: detuned sine pairs on an Am chord (A–C–E–A)
+    // Each note has two slightly-detuned oscillators → warm chorus without noise
+    // [freq1, freq2, gain]
+    [
+      [110.0, 110.7, 0.048],  // A2
+      [130.8, 131.4, 0.032],  // C3  (minor third — gives wintery melancholy)
+      [164.8, 165.5, 0.028],  // E3
+      [220.0, 221.0, 0.022],  // A3
+      [261.6, 262.4, 0.014],  // C4
+      [330.0, 331.0, 0.010],  // E4  (very soft upper layer)
+    ].forEach(([f1, f2, gain]) => {
+      [f1, f2].forEach((freq, i) => {
+        const osc = audioCtx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        // Each voice has its own very-slow vibrato so they drift independently
+        const vib = audioCtx.createOscillator();
+        vib.frequency.value = 0.09 + i * 0.04;
+        const vibAmt = audioCtx.createGain();
+        vibAmt.gain.value = 0.35;
+        vib.connect(vibAmt); vibAmt.connect(osc.frequency);
+        vib.start();
+        const g = audioCtx.createGain();
+        g.gain.value = gain;
+        osc.connect(g); g.connect(masterGain);
+        osc.start();
+      });
+    });
+  }
+
+  return {
+    start() {
+      if (!audioCtx || !audioActive) return;
+      _build();
+      if (!masterGain) return;
+      masterGain.gain.cancelScheduledValues(audioCtx.currentTime);
+      masterGain.gain.setTargetAtTime(1.0, audioCtx.currentTime, 3.0);
+    },
+    stop() {
+      if (!masterGain) return;
+      masterGain.gain.cancelScheduledValues(audioCtx.currentTime);
+      masterGain.gain.setTargetAtTime(0, audioCtx.currentTime, 2.5);
+    },
+  };
+})();
+
+// ============================================
+// AUTUMN AMBIENT — warm Dm pad + falling-leaf plucks
+// ============================================
+const _autumnAmbient = (() => {
+  let masterGain  = null;
+  let built       = false;
+  let pluckTimer  = null;
+
+  function _build() {
+    if (!audioCtx || built) return;
+    built = true;
+
+    masterGain = audioCtx.createGain();
+    masterGain.gain.value = 0;
+    masterGain.connect(audioCtx.destination);
+
+    // Slow sway LFO — like leaves drifting on the breeze
+    const swayLFO = audioCtx.createOscillator();
+    swayLFO.frequency.value = 0.05; // very slow
+    const swayAmt = audioCtx.createGain();
+    swayAmt.gain.value = 0.12;
+    swayLFO.connect(swayAmt);
+    swayAmt.connect(masterGain.gain);
+    swayLFO.start();
+
+    // Dm pad (D–F–A): detuned sine pairs, warm and earthy
+    // [freq1, freq2, gain]
+    [
+      [146.8, 147.5, 0.042],  // D3
+      [174.6, 175.3, 0.030],  // F3  (minor third)
+      [220.0, 221.0, 0.026],  // A3
+      [293.7, 294.5, 0.018],  // D4
+      [349.2, 350.0, 0.012],  // F4
+      [440.0, 441.2, 0.008],  // A4 (faint shimmer)
+    ].forEach(([f1, f2, gain]) => {
+      [f1, f2].forEach((freq, i) => {
+        const osc = audioCtx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        const vib = audioCtx.createOscillator();
+        vib.frequency.value = 0.08 + i * 0.035;
+        const vibAmt = audioCtx.createGain();
+        vibAmt.gain.value = 0.3;
+        vib.connect(vibAmt); vibAmt.connect(osc.frequency);
+        vib.start();
+        const g = audioCtx.createGain();
+        g.gain.value = gain;
+        osc.connect(g); g.connect(masterGain);
+        osc.start();
+      });
+    });
+  }
+
+  // Single falling-leaf pluck: short decaying sine at a pentatonic pitch
+  function _pluck() {
+    if (!audioCtx || !audioActive || !masterGain) return;
+    // D pentatonic minor: D3 E3 F3 A3 C4 D4 F4 A4
+    const FREQS = [146.8, 164.8, 174.6, 220.0, 261.6, 293.7, 349.2, 440.0];
+    const freq  = FREQS[Math.floor(Math.random() * FREQS.length)];
+    const now   = audioCtx.currentTime;
+
+    const osc = audioCtx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.value = freq;
+
+    const env = audioCtx.createGain();
+    env.gain.setValueAtTime(0, now);
+    env.gain.linearRampToValueAtTime(0.055, now + 0.008);  // fast attack
+    env.gain.exponentialRampToValueAtTime(0.0001, now + 1.6); // gentle decay
+
+    osc.connect(env); env.connect(masterGain);
+    osc.start(now);
+    osc.stop(now + 1.7);
+  }
+
+  function _schedulePlucks() {
+    if (!audioActive) return;
+    _pluck();
+    // Next pluck in 1.8 – 5.5 seconds (irregular, like leaves falling)
+    const delay = 1800 + Math.random() * 3700;
+    pluckTimer = setTimeout(_schedulePlucks, delay);
+  }
+
+  return {
+    start() {
+      if (!audioCtx || !audioActive) return;
+      _build();
+      if (!masterGain) return;
+      masterGain.gain.cancelScheduledValues(audioCtx.currentTime);
+      masterGain.gain.setTargetAtTime(1.0, audioCtx.currentTime, 2.5);
+      if (!pluckTimer) _schedulePlucks();
+    },
+    stop() {
+      if (!masterGain) return;
+      masterGain.gain.cancelScheduledValues(audioCtx.currentTime);
+      masterGain.gain.setTargetAtTime(0, audioCtx.currentTime, 2.0);
+      if (pluckTimer) { clearTimeout(pluckTimer); pluckTimer = null; }
+    },
+  };
+})();
 
 // ============================================
 // SEASON MOMENT ENTRANCE ANIMATIONS

@@ -579,10 +579,17 @@ a {
 }
 
 .audio-icon {
-  font-size: 15px;
-  line-height: 1;
   pointer-events: none;
+  display: block;
 }
+
+/* default: show muted icon (audio not yet started) */
+.audio-icon--on  { display: none; }
+.audio-icon--off { display: block; }
+
+/* active = sound is ON */
+.audio-btn.active .audio-icon--on  { display: block; }
+.audio-btn.active .audio-icon--off { display: none; }
 
 /* ============================================
    HERO MARQUEE
