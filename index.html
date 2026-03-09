@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CHRONOSCAPE</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/src/styles.css" />
+</head>
+<body data-season="spring">
+
+  <!-- THREE.JS CANVAS -->
+  <canvas id="world"></canvas>
+
+  <!-- SIDE TIMELINE -->
+  <div class="side-timeline" id="sideTimeline" aria-hidden="true">
+    <div class="timeline-track">
+      <div class="timeline-progress" id="timelineProgress"></div>
+    </div>
+    <div class="timeline-labels">
+      <span class="tl-label tl-spring active" data-target="spring">SP</span>
+      <span class="tl-label tl-summer" data-target="summer">SM</span>
+      <span class="tl-label tl-autumn" data-target="autumn">AU</span>
+      <span class="tl-label tl-winter" data-target="winter">WN</span>
+    </div>
+  </div>
+
+  <!-- TRANSITION OVERLAY -->
+  <div class="transition-overlay" id="transitionOverlay">
+    <div class="tear-line"></div>
+    <div class="tear-line"></div>
+    <div class="tear-line"></div>
+    <div class="tear-line"></div>
+    <div class="tear-line"></div>
+    <div class="tear-line"></div>
+    <div class="tear-line"></div>
+    <div class="tear-line"></div>
+  </div>
+
+  <!-- NOISE OVERLAY -->
+  <div class="noise-overlay" aria-hidden="true"></div>
+
+  <!-- HEADER -->
+  <header class="header">
+    <div class="header-left">
+      <span class="logo">CHRONOSCAPE</span>
+    </div>
+    <div class="header-center">
+      <div class="season-dial" id="shiftBtn" role="button" tabindex="0" aria-label="Shift season">
+        <div class="dial-ring">
+          <div class="dial-marker dm-1" data-season-marker="spring"></div>
+          <div class="dial-marker dm-2" data-season-marker="summer"></div>
+          <div class="dial-marker dm-3" data-season-marker="autumn"></div>
+          <div class="dial-marker dm-4" data-season-marker="winter"></div>
+          <div class="dial-needle" id="dialNeedle"></div>
+        </div>
+        <div class="dial-center">
+          <span class="dial-season-abbr" id="dialAbbr">SP</span>
+        </div>
+        <span class="dial-label" id="dialLabel">SPRING</span>
+      </div>
+    </div>
+    <div class="header-right">
+      <span class="epoch-badge" id="epochBadge">01 / 04</span>
+    </div>
+  </header>
+
+  <!-- MAIN CONTENT -->
+  <main class="content">
+
+    <!-- SECTION: HERO -->
+    <section class="section section-hero" id="sectionHero">
+      <div class="hero-title">
+        <h1 class="hero-h1">
+          <span class="hero-line hero-line-1" data-scroll-reveal>TIME</span>
+          <span class="hero-line hero-line-2" data-scroll-reveal>SHAPES</span>
+          <span class="hero-line hero-line-3" data-scroll-reveal>EVERYTHING<span class="hero-dot">.</span></span>
+        </h1>
+      </div>
+
+      <!-- FLOATING SEASON WORD -->
+      <div class="floating-season" id="floatingSeason">
+        <span class="floating-season-text" id="seasonName">SPRING</span>
+        <span class="floating-season-phase" id="seasonPhase">AWAKENING</span>
+      </div>
+
+      <!-- BOTTOM MARQUEE -->
+      <div class="hero-marquee">
+        <div class="marquee-track" id="marqueeTrack">
+          <span class="marquee-item">SPRING &mdash; AWAKENING</span>
+          <span class="marquee-sep">&bull;</span>
+          <span class="marquee-item">SUMMER &mdash; ZENITH</span>
+          <span class="marquee-sep">&bull;</span>
+          <span class="marquee-item">AUTUMN &mdash; DESCENT</span>
+          <span class="marquee-sep">&bull;</span>
+          <span class="marquee-item">WINTER &mdash; STILLNESS</span>
+          <span class="marquee-sep">&bull;</span>
+          <span class="marquee-item">SPRING &mdash; AWAKENING</span>
+          <span class="marquee-sep">&bull;</span>
+          <span class="marquee-item">SUMMER &mdash; ZENITH</span>
+          <span class="marquee-sep">&bull;</span>
+          <span class="marquee-item">AUTUMN &mdash; DESCENT</span>
+          <span class="marquee-sep">&bull;</span>
+          <span class="marquee-item">WINTER &mdash; STILLNESS</span>
+          <span class="marquee-sep">&bull;</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION: STATEMENT -->
+<section class="section section-statement" id="sectionStatement">
+
+  <!-- LEFT: Sticky editorial card -->
+  <aside class="stmt-aside">
+    <div class="stmt-card" id="stmtCard">
+
+      <div class="stmt-card-head">
+        <span class="stmt-num" id="stmtNum">01</span>
+        <div class="stmt-card-labels">
+          <span class="stmt-season-tag" id="stmtSeasonTag">SPRING</span>
+          <span class="stmt-note-tag">SEASONAL NOTE</span>
+        </div>
+      </div>
+
+      <div class="stmt-ring-wrap">
+        <canvas id="stmtRingCanvas"></canvas>
+        <div class="stmt-ring-center">
+          <span class="stmt-ring-name" id="stmtRingName">SPRING</span>
+          <span class="stmt-ring-phase" id="stmtRingPhase">AWAKENING</span>
+        </div>
+      </div>
+
+      <blockquote class="stmt-blockquote">
+        <span class="stmt-bq-mark">&ldquo;</span>
+        <p class="stmt-bq-text" id="stmtBqText">Nature doesn&rsquo;t rush, yet everything is accomplished.</p>
+      </blockquote>
+
+      <div class="stmt-metrics">
+        <div class="stmt-metric-row">
+          <span class="stmt-metric-lbl">ENERGY</span>
+          <div class="stmt-metric-track"><div class="stmt-metric-fill" id="stmtBarA"></div></div>
+          <span class="stmt-metric-val" id="stmtValA">35%</span>
+        </div>
+        <div class="stmt-metric-row">
+          <span class="stmt-metric-lbl">LIGHT</span>
+          <div class="stmt-metric-track"><div class="stmt-metric-fill" id="stmtBarB"></div></div>
+          <span class="stmt-metric-val" id="stmtValB">45%</span>
+        </div>
+        <div class="stmt-metric-row">
+          <span class="stmt-metric-lbl">GROWTH</span>
+          <div class="stmt-metric-track"><div class="stmt-metric-fill" id="stmtBarC"></div></div>
+          <span class="stmt-metric-val" id="stmtValC">78%</span>
+        </div>
+      </div>
+
+    </div>
+  </aside>
+
+  <!-- RIGHT: Giant statement text -->
+  <div class="stmt-text-area" id="stmtTextArea">
+    <div class="stmt-lines" id="stmtLines">
+      <div class="stmt-line" data-line="0">
+        <span class="stmt-line-inner">Every ending is</span>
+      </div>
+      <div class="stmt-line stmt-line--em" data-line="1">
+        <span class="stmt-line-inner">a <em class="stmt-em" id="stmtEm1"><span class="stmt-em-flood"></span><span class="stmt-em-text">quiet beginning</span></em>.</span>
+      </div>
+      <div class="stmt-line" data-line="2">
+        <span class="stmt-line-inner">The world doesn&rsquo;t</span>
+      </div>
+      <div class="stmt-line" data-line="3">
+        <span class="stmt-line-inner">stop turning &mdash; it</span>
+      </div>
+      <div class="stmt-line stmt-line--em" data-line="4">
+        <span class="stmt-line-inner"><em class="stmt-em" id="stmtEm2"><span class="stmt-em-flood"></span><span class="stmt-em-text">transforms</span></em>.</span>
+      </div>
+    </div>
+    <div class="stmt-rule" id="stmtRule"></div>
+  </div>
+
+</section>
+
+    <!-- SECTION: EPOCHS -->
+    <section class="section section-epochs" id="sectionEpochs">
+      <h2 class="epochs-title" data-scroll-reveal>The Four Epochs</h2>
+      <p class="epochs-sub">(WITNESS EACH TRANSFORMATION)</p>
+      <div class="epochs-grid">
+        <div class="epoch-card" data-epoch="spring">
+          <div class="epoch-num">01.</div>
+          <div class="epoch-visual" id="epochVisual1"></div>
+          <h3 class="epoch-name">Spring</h3>
+          <p class="epoch-desc">Dormant seeds crack open. The first green tendrils push through frozen earth. Everything trembles with potential energy.</p>
+        </div>
+        <div class="epoch-card" data-epoch="summer">
+          <div class="epoch-num">02.</div>
+          <div class="epoch-visual" id="epochVisual2"></div>
+          <h3 class="epoch-name">Summer</h3>
+          <p class="epoch-desc">Maximum radiance. Light bends around every surface. The world is saturated, buzzing, alive at its absolute peak.</p>
+        </div>
+        <div class="epoch-card" data-epoch="autumn">
+          <div class="epoch-num">03.</div>
+          <div class="epoch-visual" id="epochVisual3"></div>
+          <h3 class="epoch-name">Autumn</h3>
+          <p class="epoch-desc">The great exhale. Color deepens before it fades. There is extraordinary beauty in the act of releasing.</p>
+        </div>
+        <div class="epoch-card" data-epoch="winter">
+          <div class="epoch-num">04.</div>
+          <div class="epoch-visual" id="epochVisual4"></div>
+          <h3 class="epoch-name">Winter</h3>
+          <p class="epoch-desc">Reduction to essence. Beneath the silence, roots grow deeper. Stillness is not absence &mdash; it is preparation.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION: PHILOSOPHY -->
+    <section class="section section-philosophy" id="sectionPhilosophy">
+      <div class="philosophy-text">
+        <p class="big-text" data-scroll-reveal>
+          <span class="big-line">Time is not linear.</span>
+          <span class="big-line">It <em class="em-highlight">spirals</em>.</span>
+          <span class="big-line">Each cycle returns</span>
+          <span class="big-line">us to the same place,</span>
+          <span class="big-line">but we are <em class="em-highlight">never</em></span>
+          <span class="big-line">the same.</span>
+        </p>
+      </div>
+    </section>
+
+    <!-- FOOTER -->
+    <footer class="footer" id="footer">
+      <div class="footer-logo">
+        <span class="footer-logo-text">CHRONOSCAPE</span>
+      </div>
+      <div class="footer-center">
+        <button class="footer-top-btn" id="topBtn">
+          <span>TOP</span>
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 19V5M5 12l7-7 7 7"/>
+          </svg>
+        </button>
+      </div>
+      <div class="footer-right">
+        <span class="footer-label">CRAFTED IN CODE</span>
+        <span class="footer-year">2026</span>
+      </div>
+    </footer>
+
+  </main>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
